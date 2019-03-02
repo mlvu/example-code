@@ -41,7 +41,16 @@ def gather(generator, batches):
 
     return np.concatenate(res, axis=0)
 
-def rec_loss(y_true, y_pred):
+
+def l1_loss(y_true, y_pred):
+    losses = K.abs(y_true - y_pred)
+    return K.mean(K.sum(K.sum(K.sum(losses, axis=3), axis=2), axis=1), axis=0) # Note the sum over pixels and channels, so the loss stays balanced with the kl term
+
+def l2_loss(y_true, y_pred):
+    losses = K.square(y_true - y_pred)
+    return K.mean(K.sum(K.sum(K.sum(losses, axis=3), axis=2), axis=1), axis=0) # Note the sum over pixels and channels, so the loss stays balanced with the kl term
+
+def bce_loss(y_true, y_pred):
     losses = K.binary_crossentropy(y_true, y_pred)
     return K.mean(K.sum(K.sum(K.sum(losses, axis=3), axis=2), axis=1), axis=0) # Note the sum over pixels and channels, so the loss stays balanced with the kl term
 
@@ -103,6 +112,15 @@ def go(options):
 
     # Debugging info to see if we're using the GPU
     print('devices', device_lib.list_local_devices())
+
+    if options.loss == 'bce':
+        loss = bce_loss
+    elif options.loss == 'l1':
+        loss = l1_loss
+    elif options.loss == 'l2':
+        loss = l2_loss
+    else:
+        raise Exception('Loss type {} not recognized.'.format(options.loss))
 
     if options.dataset == 'lfw':
 
@@ -248,7 +266,7 @@ def go(options):
 
     # Choose a loss function (BCE) and a search algorithm
     optimizer = Adam(lr=options.lr)
-    auto.compile(optimizer=optimizer, loss=rec_loss)
+    auto.compile(optimizer=optimizer, loss=loss)
 
     ##-- Training
     plotat = [0, 2, 5, 10, 25, 50, 75, 100, 150, 250] # plot reconstructions for these epochs
@@ -355,6 +373,12 @@ if __name__ == "__main__":
                         dest="variational",
                         help="Use a variational autoencoder",
                         action='store_true')
+
+    parser.add_argument("-L", "--loss",
+                        dest="loss",
+                        help="Reconstruction loss to use (bce, l1, l2).",
+                        default='bce', type=str)
+
 
     options = parser.parse_args()
 
