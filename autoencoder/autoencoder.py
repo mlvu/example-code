@@ -121,6 +121,10 @@ def go(options):
         pooling = 2
         grayscale = True
 
+        size = x.shape[0]
+        total_batches = x.shape[0] // options.batch_size
+        print('Using LFW dataset, {} instances.'.format(x.shape[0]))
+
     elif options.dataset == 'ffhq':
         datagen = ImageDataGenerator(
             rescale=1. / 255)
@@ -265,6 +269,8 @@ def go(options):
             plt.savefig('reconstructions.{:04}.pdf'.format(e))
         for i, batch in tqdm(enumerate(xgen)):
             auto.train_on_batch(batch, batch)
+            if i > len(xgen):
+                break
 
     # Select the smiling and nonsmiling images from the dataset
     smiling = faces[SMILING, ...]
