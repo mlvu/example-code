@@ -35,7 +35,7 @@ def prod(inp):
 def gather(generator, batches):
     res = []
     for i, batch in enumerate(generator):
-        res.append(batch)
+        res.append(batch[0])
         if i > batches:
             break
 
@@ -117,12 +117,11 @@ def go(options):
         x = np.pad(faces.images, ((0,0), (1,1), (0, 1)), mode='constant')[:, :, :, None]
 
         shape = x.shape[1:]
-        xgen = datagen.flow(x, batch_size=options.batch_size, shuffle=False)
+        xgen = datagen.flow(x, y=x, batch_size=options.batch_size, shuffle=False)
         pooling = 2
         grayscale = True
 
         size = x.shape[0]
-        total_batches = x.shape[0] // options.batch_size
         print('Using LFW dataset, {} instances.'.format(x.shape[0]))
 
     elif options.dataset == 'ffhq':
@@ -130,14 +129,16 @@ def go(options):
             rescale=1. / 255)
 
         # These are people in the data that smile
-        SMILING = []
-        NONSMILING = []
+        SMILING = [1, 6, 7, 9, 11, 14, 17, 18, 19, 22, 25, 30, 32, 37, 38, 45, 47, 49, 55, 56]
+        NONSMILING = [2, 4, 12, 20, 21, 24, 26, 41, 43, 44, 48, 51, 52, 53, 58, 59, 63, 68, 69, 98]
 
         # Dowload the data
-        xgen = datagen.flow_from_directory(options.data_dir, batch_size=options.batch_size)
+        xgen = datagen.flow_from_directory(options.data_dir, batch_size=options.batch_size, target_size=(128, 128), shuffle=False)
         shape = (128, 128, 3)
         pooling = 4
         grayscale = False
+
+        print('Using FFHQ thumbs dataset, {} batches.'.format(len(xgen)))
 
     ##-- Plot the data
 
@@ -155,16 +156,16 @@ def go(options):
     plt.savefig('faces.pdf')
 
     # smiling/nonsmiling
-    fig = plt.figure(figsize=(5, 3))
+    fig = plt.figure(figsize=(5, 4))
     for i in range(len(SMILING)):
-        ax = fig.add_subplot(3, 5, i + 1, xticks=[], yticks=[])
+        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
         ax.imshow(faces[SMILING[i]] * (np.ones(3) if grayscale else 1))
 
     plt.savefig('smiling-faces.pdf')
 
-    fig = plt.figure(figsize=(5, 3))
+    fig = plt.figure(figsize=(5, 4))
     for i in range(len(NONSMILING)):
-        ax = fig.add_subplot(3, 5, i + 1, xticks=[], yticks=[])
+        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
         ax.imshow(faces[NONSMILING[i]] * (np.ones(3) if grayscale else 1))
 
     plt.savefig('nonsmiling-faces.pdf')
@@ -268,7 +269,7 @@ def go(options):
             plt.tight_layout()
             plt.savefig('reconstructions.{:04}.pdf'.format(e))
         for i, batch in tqdm(enumerate(xgen)):
-            auto.train_on_batch(batch, batch)
+            auto.train_on_batch(batch[0], batch[0])
             if i > len(xgen):
                 break
 
