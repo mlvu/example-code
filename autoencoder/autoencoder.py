@@ -130,7 +130,7 @@ class Sample(kl.Layer):
 
 def go(options):
 
-    tbw = SummaryWriter('./tb')
+    tbw = SummaryWriter('./tb/' + options.tbd)
 
     # Debugging info to see if we're using the GPU
     print('devices', device_lib.list_local_devices())
@@ -210,28 +210,29 @@ def go(options):
 
     plt.savefig('nonsmiling-faces.pdf')
 
+    hidden_size = options.hidden
+
     ##-- Build the model
     if options.model is None:
 
-        hidden_size = options.hidden
 
         # Build the encoder
         encoder = Sequential()
 
-        a, b, c = 4, 6, 8
+        a, b, c = 4, 16, 64
         vmult = 2 if options.variational else 1
 
         encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu', input_shape=shape))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
         encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
         encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
         encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
         encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
         encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
         encoder.add(kl.Flatten())
         encoder.add(kl.Dense(hidden_size * 5, activation='relu'))
@@ -248,16 +249,16 @@ def go(options):
         decoder.add(kl.Reshape(lower_shape))
         decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
         decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
         decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
         decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
         decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
         decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
         decoder.add(kl.Conv2D(kernel_size=(1, 1), filters=shape[2], padding='same', activation='sigmoid'))
 
         decoder.summary()
@@ -319,7 +320,7 @@ def go(options):
                 if i > len(xgen):
                     break
     else:
-        auto    = keras.models.load_model(options.model + '.auto.hp5')
+        # auto    = keras.models.load_model(options.model + '.auto.hp5')
         encoder = keras.models.load_model(options.model + '.enc.hp5')
         decoder = keras.models.load_model(options.model + '.dec.hp5')
 
@@ -339,7 +340,7 @@ def go(options):
         plt.scatter(sample[:, 0], sample[:, 1], linewidth=0, color=RED, s=12, alpha=1)
         plt.savefig('sample.scatter.png')
 
-        out = decoder.predict(sample)
+    out = decoder.predict(sample)
 
     fig = plt.figure(figsize=(5, 20))
 
@@ -349,7 +350,7 @@ def go(options):
         ax.imshow(out[i] * (np.ones(3) if grayscale else 1), cmap=plt.cm.gray)
 
     plt.tight_layout()
-    plt.savefig('faces-generated.regular.pdf')
+    plt.savefig('faces-generated.pdf')
 
     # Select the smiling and nonsmiling images from the dataset
     smiling = faces[SMILING, ...]
@@ -358,6 +359,10 @@ def go(options):
     # Pass them through the encoder
     smiling_latent = encoder.predict(smiling)
     nonsmiling_latent = encoder.predict(nonsmiling)
+
+    if options.variational:
+        smiling_latent = smiling_latent[:, :hidden_size]
+        nonsmiling_latent = smiling_latent[:, :hidden_size]
 
     # Compute the means for both groups
     smiling_mean = smiling_latent.mean(axis=0)
@@ -380,10 +385,14 @@ def go(options):
     for rando in range(randos):
         rando_latent = encoder.predict(faces[rando:rando+1])
 
+        if options.variational:
+            rando_latent = rando_latent[:, :hidden_size]
+
         # plot several images
         adds = np.linspace(-1.0, 1.0, k)
 
         for i in range(k):
+
             gen_latent = rando_latent + adds[i] * smiling_vector
             gen = decoder.predict(gen_latent)
 
@@ -439,12 +448,15 @@ if __name__ == "__main__":
                         help="Reconstruction loss to use (bce, l1, l2).",
                         default='bce', type=str)
 
-
     parser.add_argument("-M", "--model",
                         dest="model",
                         help="Perform the experiments using an existing model. If None, a new model is trained.",
                         default=None, type=str)
 
+    parser.add_argument("-T", "--tbd",
+                        dest="tbd",
+                        help="Tensorboar dir.",
+                        default='default', type=str)
 
     options = parser.parse_args()
 
