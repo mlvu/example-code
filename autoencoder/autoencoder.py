@@ -2,6 +2,7 @@ import keras, sys
 
 from keras.optimizers import Adam
 from tensorflow.python.client import device_lib
+import tensorflow_probability as tfp
 
 from sklearn import datasets
 import numpy as np
@@ -18,6 +19,7 @@ from keras import layers as kl
 from keras.models import Sequential, Model
 
 from keras.preprocessing.image import ImageDataGenerator
+from tensorboardX import SummaryWriter
 
 from tqdm import trange, tqdm
 
@@ -25,6 +27,25 @@ def warn(*args, **kwargs):
     pass
 import warnings
 warnings.warn = warn
+
+RED  = '#C82506'
+BLUE = '#0365C0'
+GREEN = '#00882B'
+ORANGE = '#DE6A10'
+PURPLE = '#773F9B'
+YELLOW = '#DCBD23'
+
+import math
+import numpy as np
+import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
+
+def clean(ax=None):
+    if ax is None:
+        ax = plt.gca()
+    ax.spines["right"].set_visible(False)
+    ax.spines["top"].set_visible(False)
 
 def prod(inp):
     res = 1
@@ -40,7 +61,6 @@ def gather(generator, batches):
             break
 
     return np.concatenate(res, axis=0)
-
 
 def l1_loss(y_true, y_pred):
     losses = K.abs(y_true - y_pred)
@@ -109,6 +129,8 @@ class Sample(kl.Layer):
         return shape_mu
 
 def go(options):
+
+    tbw = SummaryWriter('./tb')
 
     # Debugging info to see if we're using the GPU
     print('devices', device_lib.list_local_devices())
@@ -189,107 +211,145 @@ def go(options):
     plt.savefig('nonsmiling-faces.pdf')
 
     ##-- Build the model
-    hidden_size = options.hidden
+    if options.model is None:
 
-    # Build the encoder
-    encoder = Sequential()
+        hidden_size = options.hidden
 
-    a, b, c = 16, 32, 128
-    vmult = 2 if options.variational else 1
+        # Build the encoder
+        encoder = Sequential()
 
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu', input_shape=shape))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-    encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
-    encoder.add(kl.Flatten())
-    encoder.add(kl.Dense(hidden_size * 5, activation='relu'))
-    encoder.add(kl.Dense(hidden_size * vmult))
+        a, b, c = 4, 6, 8
+        vmult = 2 if options.variational else 1
 
-    encoder.summary()
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu', input_shape=shape))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
+        encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        #encoder.add(kl.Conv2D(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        encoder.add(kl.MaxPool2D(pool_size=(pooling, pooling)))
+        encoder.add(kl.Flatten())
+        encoder.add(kl.Dense(hidden_size * 5, activation='relu'))
+        encoder.add(kl.Dense(hidden_size * vmult))
 
-    # Build the decoder
-    lower_shape = (shape[0] // (pooling ** 3), shape[1] // (pooling ** 3), c)
-    print(lower_shape, prod(lower_shape))
-    decoder = Sequential()
-    decoder.add(kl.Dense(hidden_size * 5, activation='relu', input_dim=hidden_size))
-    decoder.add(kl.Dense(prod(lower_shape), activation='relu'))
-    decoder.add(kl.Reshape(lower_shape))
-    decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
-    decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
-    decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-    decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
-    decoder.add(kl.Conv2D(kernel_size=(1, 1), filters=shape[2], padding='same', activation='sigmoid'))
+        encoder.summary()
 
-    decoder.summary()
+        # Build the decoder
+        lower_shape = (shape[0] // (pooling ** 3), shape[1] // (pooling ** 3), c)
+        print(lower_shape, prod(lower_shape))
+        decoder = Sequential()
+        decoder.add(kl.Dense(hidden_size * 5, activation='relu', input_dim=hidden_size))
+        decoder.add(kl.Dense(prod(lower_shape), activation='relu'))
+        decoder.add(kl.Reshape(lower_shape))
+        decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=c, padding='same', activation='relu'))
+        decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=b, padding='same', activation='relu'))
+        decoder.add(kl.UpSampling2D(size=(pooling, pooling)))
+        decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        #decoder.add(kl.Conv2DTranspose(kernel_size=(3, 3), filters=a, padding='same', activation='relu'))
+        decoder.add(kl.Conv2D(kernel_size=(1, 1), filters=shape[2], padding='same', activation='sigmoid'))
 
-    if not options.variational:
-        # Stick em together to make the autoencoder
-        auto = Sequential()
+        decoder.summary()
 
-        auto.add(encoder)
-        auto.add(decoder)
+        if not options.variational:
+            # Stick em together to make the autoencoder
+            auto = Sequential()
+
+            auto.add(encoder)
+            auto.add(decoder)
+        else:
+            xin = kl.Input(shape=shape)
+            eps = kl.Input(tensor=K.random_normal(shape=(K.shape(xin)[0], hidden_size)))
+
+            z = encoder(xin)
+
+            # slice out the zmean and zvar
+            zmean = kl.Lambda(lambda x: x[:, :hidden_size], output_shape=(hidden_size,))(z)
+            zvar  = kl.Lambda(lambda x: x[:, hidden_size:], output_shape=(hidden_size,))(z)
+
+            zmean, zvar = KLLayer()([zmean, zvar])
+
+            zsample = Sample()([zmean, zvar, eps])
+
+            out = decoder(zsample)
+
+            auto = Model([xin, eps], out)
+
+        # Choose a loss function (BCE) and a search algorithm
+        optimizer = Adam(lr=options.lr)
+        auto.compile(optimizer=optimizer, loss=loss)
+
+        ##-- Training
+        plotat = [0, 2, 5, 10, 25, 50, 75, 100, 150, 250] # plot reconstructions for these epochs
+        instances_seen = 0
+        for e in range(options.epochs):
+            print('EPOCH ', e)
+            if e in plotat:
+                # plot reconstructions
+                rec = auto.predict(faces[:5*20])
+
+                fig = plt.figure(figsize=(5, 20))
+                for i in range(5 * 20):
+                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                    ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
+
+                plt.tight_layout()
+                plt.savefig('reconstructions.{:04}.pdf'.format(e))
+
+                auto.save('./model.auto.hp5')
+                encoder.save('./model.enc.hp5')
+                decoder.save('./model.dec.hp5')
+
+            for i, batch in tqdm(enumerate(xgen)):
+                loss = auto.train_on_batch(batch[0], batch[0])
+                instances_seen += batch[0].shape[0]
+                tbw.add_scalar('seq2seq/batch-loss', float(loss), instances_seen)
+
+                if i > len(xgen):
+                    break
     else:
-        auto = Model()
+        auto    = keras.models.load_model(options.model + '.auto.hp5')
+        encoder = keras.models.load_model(options.model + '.enc.hp5')
+        decoder = keras.models.load_model(options.model + '.dec.hp5')
 
-        xin = kl.Input(shape=shape)
-        eps = kl.Input(tensor=K.random_normal(shape=(K.shape(xin)[0], hidden_size)))
+    if options.variational:
+        sample = np.random.randn(100, hidden_size)
+    else:
+        # Fit an MVN to the latent space and sample
+        latent = encoder.predict(faces)
 
-        z = encoder(xin)
+        plt.figure(figsize=(8, 6))
+        plt.scatter(latent[:, 0], latent[:, 1], linewidth=0, color=BLUE, s=4, alpha=0.05)
 
-        # slice out the zmean and zvar
-        zmean = kl.Lambda(lambda x: x[:, :hidden_size], output_shape=(hidden_size,))(z)
-        zvar  = kl.Lambda(lambda x: x[:, hidden_size:], output_shape=(hidden_size,))(z)
+        mean = np.mean(latent, axis=0)
+        cov = np.cov(latent.T)
 
-        zmean, zvar = KLLayer()([zmean, zvar])
+        sample = np.random.multivariate_normal(mean, cov, 100)
+        plt.scatter(sample[:, 0], sample[:, 1], linewidth=0, color=RED, s=12, alpha=1)
+        plt.savefig('sample.scatter.png')
 
-        zsample = Sample()([zmean, zvar, eps])
+        out = decoder.predict(sample)
 
-        out = decoder(zsample)
+    fig = plt.figure(figsize=(5, 20))
 
-        auto = Model([xin, eps], out)
+    # plot several images
+    for i in range(100):
+        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+        ax.imshow(out[i] * (np.ones(3) if grayscale else 1), cmap=plt.cm.gray)
 
-    # Choose a loss function (BCE) and a search algorithm
-    optimizer = Adam(lr=options.lr)
-    auto.compile(optimizer=optimizer, loss=loss)
-
-    ##-- Training
-    plotat = [0, 2, 5, 10, 25, 50, 75, 100, 150, 250] # plot reconstructions for these epochs
-    for e in range(options.epochs):
-        print('EPOCH ', e)
-        if e in plotat:
-            # plot reconstructions
-            rec = auto.predict(faces[:5*20])
-
-            print('faces', faces[0, :5, :5, 0])
-            print('rec', rec[0, :5, :5, 0])
-
-            fig = plt.figure(figsize=(5, 20))
-            for i in range(5 * 20):
-                ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-                ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
-
-            plt.tight_layout()
-            plt.savefig('reconstructions.{:04}.pdf'.format(e))
-        for i, batch in tqdm(enumerate(xgen)):
-            auto.train_on_batch(batch[0], batch[0])
-            if i > len(xgen):
-                break
+    plt.tight_layout()
+    plt.savefig('faces-generated.regular.pdf')
 
     # Select the smiling and nonsmiling images from the dataset
     smiling = faces[SMILING, ...]
@@ -378,6 +438,12 @@ if __name__ == "__main__":
                         dest="loss",
                         help="Reconstruction loss to use (bce, l1, l2).",
                         default='bce', type=str)
+
+
+    parser.add_argument("-M", "--model",
+                        dest="model",
+                        help="Perform the experiments using an existing model. If None, a new model is trained.",
+                        default=None, type=str)
 
 
     options = parser.parse_args()
