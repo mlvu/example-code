@@ -267,8 +267,8 @@ def go(arg):
                 # reconstructions
 
                 # plot reconstructions
-                zs = encoder(facespt[:5 * 20])
-                rec = torch.sigmoid(decoder(zs[:, :arg.latent_size]))
+                lts = encoder(facespt[:5 * 20])
+                rec = torch.sigmoid(decoder(lts[:, :arg.latent_size]))
                 rec = rec.permute(0, 2, 3, 1).cpu().data.numpy()
 
                 fig = plt.figure(figsize=(5, 20))
@@ -280,8 +280,8 @@ def go(arg):
                 plt.savefig(f'reconstructions.{epoch:04}.pdf')
 
                 # random samples
-                zs = torch.randn(100, arg.latent_size, device=DV)
-                outs = torch.sigmoid(decoder(zs))
+                lts = torch.randn(100, arg.latent_size, device=DV)
+                outs = torch.sigmoid(decoder(lts))
                 outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
 
                 fig = plt.figure(figsize=(5, 20))
