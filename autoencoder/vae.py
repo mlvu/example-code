@@ -42,7 +42,7 @@ YELLOW = '#DCBD23'
 # workaround for weird bug (macos only)
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
-OUT_EPOCHS = [0, 1, 2, 3, 4, 5, 10, 25, 50, 100, 150, 300]
+OUT_EPOCHS = [0, 1, 2, 3, 4, 5, 10, 25, 50, 100, 150, 200, 250, 300]
 
 def gather(generator, batches, numpy=True):
     res = []
