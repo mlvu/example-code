@@ -245,7 +245,7 @@ def go(arg):
 
     zs = arg.latent_size
 
-    encoder = Encoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    encoder = Encoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm, vae=arg.variational)
     decoder = Decoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
 
     if arg.cp is not None:
