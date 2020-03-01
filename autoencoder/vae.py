@@ -22,15 +22,44 @@ from collections import defaultdict, Counter, OrderedDict
 
 import util
 
+import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+
 from torch.utils.tensorboard import SummaryWriter
 
 SEEDFRAC = 2
 DV = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+RED  = '#C82506'
+BLUE = '#0365C0'
+GREEN = '#00882B'
+ORANGE = '#DE6A10'
+PURPLE = '#773F9B'
+YELLOW = '#DCBD23'
+
+# workaround for weird bug (macos only)
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
+OUT_EPOCHS = [0, 1, 2, 3, 4, 5, 10, 25, 50, 100, 150, 300]
+
+def gather(generator, batches, numpy=True):
+    res = []
+    for i, batch in enumerate(generator):
+        res.append(batch[0])
+        if i > batches:
+            break
+
+    res = torch.cat(res, axis=0)
+    
+    if numpy:
+        return res.permute(0, 2, 3, 1).cpu().data.numpy()
+    return res
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_size, channels, zs=256, k=3, batch_norm=False):
+    def __init__(self, in_size, channels, zs=256, k=3, batch_norm=False, vae=False):
         super().__init__()
 
         c, h, w = in_size
@@ -44,7 +73,7 @@ class Encoder(nn.Module):
         self.block5 = util.Block(c4, c5, kernel_size=k, batch_norm=batch_norm)
 
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
-        self.lin = nn.Linear(self.fs, zs*2)
+        self.lin = nn.Linear(self.fs, zs*(2 if vae else 1))
 
     def forward(self, x0):
 
@@ -102,6 +131,7 @@ class Decoder(nn.Module):
 def go(arg):
 
     tbw = SummaryWriter(log_dir=arg.tb_dir)
+    grayscale = False
 
     ## Load the data
     if arg.task == 'mnist':
@@ -148,7 +178,7 @@ def go(arg):
         trainset = torchvision.datasets.ImageFolder(root=arg.data_dir+os.sep+'train',
                                                     transform=transform)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size=arg.batch_size,
-                                                  shuffle=True, num_workers=2)
+                                                  shuffle=False, num_workers=2)
 
         testset = torchvision.datasets.ImageFolder(root=arg.data_dir+os.sep+'valid',
                                                    transform=transform)
@@ -157,26 +187,68 @@ def go(arg):
         C, H, W = 3, 64, 64
 
     elif arg.task == 'ffhq':
+
+        # These are people in the data that smile
+        SMILING = [1, 6, 7, 9, 14,   16, 17, 20, 21, 29,    30, 31, 33, 40, 45,    51, 55, 57, 58, 61]
+        NONSMILING = [0, 2, 3, 4, 5,    8, 10, 11, 18, 19,     23, 25, 27, 28, 32,    34, 35, 36, 37, 44]
+
         transform = Compose([ToTensor()])
 
         trainset = torchvision.datasets.ImageFolder(root=arg.data_dir+os.sep+'train',
                                                     transform=transform)
         trainloader = torch.utils.data.DataLoader(trainset, batch_size=arg.batch_size,
-                                                  shuffle=True, num_workers=2)
+                                                  shuffle=False, num_workers=2)
 
         testset = torchvision.datasets.ImageFolder(root=arg.data_dir+os.sep+'valid',
                                                    transform=transform)
         testloader = torch.utils.data.DataLoader(testset, batch_size=arg.batch_size,
                                                  shuffle=False, num_workers=2)
         C, H, W = 3, 128, 128
+        
+        grayscale = False
 
     else:
         raise Exception('Task {} not recognized.'.format(arg.task))
 
+
+    # extract the first 500 faces into a tensor
+    faces = gather(trainloader, 500 // arg.batch_size)
+    facespt = gather(trainloader, 500 // arg.batch_size, numpy=False)
+
+
+    # plot data
+    fig = plt.figure(figsize=(5, 20))
+    for i in range(5 * 20):
+        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+        ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
+        ax.set_title(i)
+
+    plt.tight_layout()
+    plt.savefig('faces.pdf')
+
+    # smiling/nonsmiling
+    fig = plt.figure(figsize=(5, 4))
+    for i in range(len(SMILING)):
+        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
+        ax.imshow(faces[SMILING[i]] * (np.ones(3) if grayscale else 1))
+
+    plt.savefig('smiling-faces.pdf')
+
+    fig = plt.figure(figsize=(5, 4))
+    for i in range(len(NONSMILING)):
+        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
+        ax.imshow(faces[NONSMILING[i]] * (np.ones(3) if grayscale else 1))
+
+    plt.savefig('nonsmiling-faces.pdf')
+
     zs = arg.latent_size
 
-    encoder = Encoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=arg.batch_norm)
-    decoder = Decoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=arg.batch_norm)
+    encoder = Encoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    decoder = Decoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+
+    if arg.cp is not None:
+        encoder.load_state_dict(torch.load(arg.cp + os.sep + 'encoder.model', map_location=torch.device('cpu')))
+        decoder.load_state_dict(torch.load(arg.cp + os.sep + 'decoder.model', map_location=torch.device('cpu')))
 
     optimizer = Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=arg.lr)
 
@@ -186,6 +258,39 @@ def go(arg):
 
     instances_seen = 0
     for epoch in range(arg.epochs):
+
+        if epoch in OUT_EPOCHS:
+            with torch.no_grad():
+
+                # reconstructions
+
+                # plot reconstructions
+                zs = encoder(facespt[:5 * 20])
+                rec = torch.sigmoid(decoder(zs[:, :arg.latent_size]))
+                rec = rec.permute(0, 2, 3, 1).cpu().data.numpy()
+
+                fig = plt.figure(figsize=(5, 20))
+                for i in range(5 * 20):
+                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                    ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
+
+                plt.tight_layout()
+                plt.savefig(f'reconstructions.{epoch:04}.pdf')
+
+                # random samples
+                zs = torch.randn(100, arg.latent_size)
+                outs = torch.sigmoid(decoder(zs))
+                outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
+
+                # plot data
+                fig = plt.figure(figsize=(5, 20))
+                for i in range(5 * 20):
+                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                    ax.imshow(outs[i] * (np.ones(3) if grayscale else 1))
+
+                plt.tight_layout()
+                plt.savefig(f'samples.{epoch:04}.pdf')
+
 
         for i, (input, _) in enumerate(tqdm.tqdm(trainloader)):
             if arg.limit is not None and i * arg.batch_size > arg.limit:
@@ -199,12 +304,12 @@ def go(arg):
             # -- encoding
             z = encoder(input)
 
-            # -- compute KL losses
-
-            kl_loss = util.kl_loss(z[:, :zs], z[:, zs:])
-
-            # -- take samples
-            zsample  = util.sample(z[:, :zs], z[:, zs:])
+            if arg.variational:
+                kl_loss = util.kl_loss(z[:, :zs], z[:, zs:])
+                zsample  = util.sample(z[:, :zs], z[:, zs:])
+            else:
+                kl_loss = 0
+                zsample = z
 
             # -- decoding
             xout = decoder(zsample)
@@ -215,7 +320,8 @@ def go(arg):
 
             instances_seen += input.size(0)
 
-            tbw.add_scalar('style-vae/zkl-loss', float(kl_loss.data.mean(dim=0).item()), instances_seen)
+            if arg.variational:
+                tbw.add_scalar('style-vae/zkl-loss', float(kl_loss.data.mean(dim=0).item()), instances_seen)
             tbw.add_scalar('style-vae/rec-loss', float(rc_loss.data.mean(dim=0).item()), instances_seen)
             tbw.add_scalar('style-vae/total-loss', float(loss.data.item()), instances_seen)
 
@@ -224,8 +330,9 @@ def go(arg):
             loss.backward()
             optimizer.step()
 
-        torch.save(encoder.state_dict(), './encoder.model')
-        torch.save(decoder.state_dict(), './decoder.model')
+        v = 'vae' if arg.variational else 'ae'
+        torch.save(encoder.state_dict(), f'./encoder.{v}.{e:04}.model')
+        torch.save(decoder.state_dict(), f'./decoder.{v}.{e:04}.model')
 
 if __name__ == "__main__":
 
@@ -234,7 +341,7 @@ if __name__ == "__main__":
 
     parser.add_argument("-t", "--task",
                         dest="task",
-                        help="Task: [mnist, cifar10].",
+                        help="Task: [mnist, cifar10, ffhq].",
                         default='mnist', type=str)
 
     parser.add_argument("-e", "--epochs",
@@ -249,9 +356,14 @@ if __name__ == "__main__":
                         default=[32, 64, 128, 256, 512],
                         type=int)
 
-    parser.add_argument("--batch-norm",
-                        dest="batch_norm",
-                        help="Adds batch normalization after each block.",
+    parser.add_argument("--no-batch-norm",
+                        dest="no_batch_norm",
+                        help="No batch normalization after each block.",
+                        action='store_true')
+
+    parser.add_argument("--variational",
+                        dest="variational",
+                        help="Uses a VAE instead of a regular AE.",
                         action='store_true')
 
     parser.add_argument("--evaluate-every",
@@ -294,6 +406,11 @@ if __name__ == "__main__":
                         dest="data_dir",
                         help="Data directory",
                         default='./data', type=str)
+
+    parser.add_argument("--checkpoint",
+                        dest="cp",
+                        help="Checkpoint directory",
+                        default=None, type=str)
 
     parser.add_argument("-T", "--tb-directory",
                         dest="tb_dir",
