@@ -215,6 +215,8 @@ def go(arg):
     faces = gather(trainloader, 500 // arg.batch_size)
     facespt = gather(trainloader, 500 // arg.batch_size, numpy=False)
 
+    if torch.cuda.is_available():
+        facespt = facespt.cuda()
 
     # plot data
     fig = plt.figure(figsize=(5, 20))
@@ -278,11 +280,10 @@ def go(arg):
                 plt.savefig(f'reconstructions.{epoch:04}.pdf')
 
                 # random samples
-                zs = torch.randn(100, arg.latent_size)
+                zs = torch.randn(100, arg.latent_size, device=DV)
                 outs = torch.sigmoid(decoder(zs))
                 outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
 
-                # plot data
                 fig = plt.figure(figsize=(5, 20))
                 for i in range(5 * 20):
                     ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
