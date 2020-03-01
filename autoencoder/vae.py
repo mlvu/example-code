@@ -264,6 +264,10 @@ def go(arg):
         if epoch in OUT_EPOCHS:
             with torch.no_grad():
 
+                v = 'vae' if arg.variational else 'ae'
+                torch.save(encoder.state_dict(), f'./encoder.{v}.{epoch:04}.model')
+                torch.save(decoder.state_dict(), f'./decoder.{v}.{epoch:04}.model')
+
                 # reconstructions
 
                 # plot reconstructions
@@ -330,10 +334,6 @@ def go(arg):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
-        v = 'vae' if arg.variational else 'ae'
-        torch.save(encoder.state_dict(), f'./encoder.{v}.{e:04}.model')
-        torch.save(decoder.state_dict(), f'./decoder.{v}.{e:04}.model')
 
 if __name__ == "__main__":
 
