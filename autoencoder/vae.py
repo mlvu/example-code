@@ -228,6 +228,15 @@ def go(arg):
     plt.tight_layout()
     plt.savefig('faces.pdf')
 
+    # plot data
+    fig = plt.figure(figsize=(5, 20))
+    for i in range(5 * 20):
+        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+        ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
+
+    plt.tight_layout()
+    plt.savefig('faces-notitle.pdf')
+
     # smiling/nonsmiling
     fig = plt.figure(figsize=(5, 4))
     for i in range(len(SMILING)):
