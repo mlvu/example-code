@@ -57,22 +57,24 @@ def gather(generator, batches, numpy=True):
         return res.permute(0, 2, 3, 1).cpu().data.numpy()
     return res
 
-def latent_sample(batch, zsize, depth):
+def latent_sample(batch, zsize, depth, zchannels):
+
+    z1, z2, z3, z4, z5 = zchannels
     z = [None] * 6
 
     if depth >= 5:
         z[0] = torch.randn(batch, zsize, device=DV)
 
     if depth >= 0:
-        z[1] = torch.randn(batch, 1, 64, 64, device=DV)
+        z[1] = torch.randn(batch, z1, 64, 64, device=DV)
     if depth >= 1:
-        z[2] = torch.randn(batch, 1, 32, 32, device=DV)
+        z[2] = torch.randn(batch, z2, 32, 32, device=DV)
     if depth >= 2:
-        z[3] = torch.randn(batch, 1, 16, 16, device=DV)
+        z[3] = torch.randn(batch, z3, 16, 16, device=DV)
     if depth >= 3:
-        z[4] = torch.randn(batch, 1,  8, 8, device=DV)
+        z[4] = torch.randn(batch, z4,  8, 8, device=DV)
     if depth >= 4:
-        z[5] = torch.randn(batch, 1,  4, 4, device=DV)
+        z[5] = torch.randn(batch, z5,  4, 4, device=DV)
 
     return z
 
@@ -104,11 +106,12 @@ def middle(z, sample=True):
 
 class Encoder(nn.Module):
 
-    def __init__(self, in_size, channels, zs=256, k=3, batch_norm=False, vae=False):
+    def __init__(self, in_size, channels, zchannels, zs=256, k=3, batch_norm=False, vae=False):
         super().__init__()
 
         c, h, w = in_size
         c1, c2, c3, c4, c5 = channels
+        z1, z2, z3, z4, z5 = zchannels
 
         # resnet blocks
         self.block1 = util.Block(c,  c1, kernel_size=k, batch_norm=batch_norm)
@@ -118,11 +121,11 @@ class Encoder(nn.Module):
         self.block5 = util.Block(c4, c5, kernel_size=k, batch_norm=batch_norm)
 
         #toz
-        self.toz1 = util.Block(c1, 2, kernel_size=1)
-        self.toz2 = util.Block(c2, 2, kernel_size=1)
-        self.toz3 = util.Block(c3, 2, kernel_size=1)
-        self.toz4 = util.Block(c4, 2, kernel_size=1)
-        self.toz5 = util.Block(c5, 2, kernel_size=1)
+        self.toz1 = util.Block(c1, 2*z1, kernel_size=1)
+        self.toz2 = util.Block(c2, 2*z2, kernel_size=1)
+        self.toz3 = util.Block(c3, 2*z3, kernel_size=1)
+        self.toz4 = util.Block(c4, 2*z4, kernel_size=1)
+        self.toz5 = util.Block(c5, 2*z5, kernel_size=1)
 
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
         self.lin = nn.Linear(self.fs, zs*2)
@@ -169,7 +172,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, out_size, channels, outc=1, zs=256, k=3, batch_norm=False):
+    def __init__(self, out_size, channels, zchannels, outc=1, zs=256, k=3, batch_norm=False):
         super().__init__()
 
         self.out_size = out_size
@@ -177,6 +180,7 @@ class Decoder(nn.Module):
         c, h, w = self.out_size
         self.channels = channels
         c1, c2, c3, c4, c5 = self.channels
+        z1, z2, z3, z4, z5 = zchannels
 
         # resnet blocks
         self.block5 = util.Block(c5, c4, kernel_size=k, deconv=True, batch_norm=batch_norm)
@@ -187,18 +191,18 @@ class Decoder(nn.Module):
 
         # fromz
         # self.fromz0 = util.Block(1, c1, kernel_size=1)
-        self.fromz1 = util.Block(1, c1, kernel_size=1)
-        self.fromz2 = util.Block(1, c2, kernel_size=1)
-        self.fromz3 = util.Block(1, c3, kernel_size=1)
-        self.fromz4 = util.Block(1, c4, kernel_size=1)
-        self.fromz5 = util.Block(1, c5, kernel_size=1)
-
+        self.fromz1 = util.Block(z1, c1, kernel_size=1)
+        self.fromz2 = util.Block(z2, c2, kernel_size=1)
+        self.fromz3 = util.Block(z3, c3, kernel_size=1)
+        self.fromz4 = util.Block(z4, c4, kernel_size=1)
+        self.fromz5 = util.Block(z5, c5, kernel_size=1)
 
         self.conv0 = nn.Conv2d(c, c * outc, kernel_size=1)
 
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
         self.ss = c5, (h // 2**5), (w // 2 ** 5)
         self.lin = nn.Linear(zs, self.fs)
+
 
     def forward(self, z):
 
@@ -375,8 +379,8 @@ def go(arg):
     #
     # plt.savefig('nonsmiling-faces.pdf')
 
-    encoder = Encoder((C, H, W), arg.channels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
-    decoder = Decoder((C, H, W), arg.channels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    encoder = Encoder((C, H, W), arg.channels, arg.zchannels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    decoder = Decoder((C, H, W), arg.channels, arg.zchannels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
 
     if arg.cp is not None:
         encoder.load_state_dict(torch.load(arg.cp + os.sep + f'encoder.model', map_location=torch.device('cpu')))
@@ -415,7 +419,7 @@ def go(arg):
                 plt.tight_layout()
                 plt.savefig(f'reconstructions.{depth}.{epoch:04}.pdf')
 
-                lts = latent_sample(100, arg.latent_size, depth)
+                lts = latent_sample(100, arg.latent_size, depth, arg.zchannels)
                 outs = torch.sigmoid(decoder(lts))
                 outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
 
@@ -494,6 +498,13 @@ if __name__ == "__main__":
                         default=[32, 64, 128, 256, 512],
                         type=int)
 
+    parser.add_argument("--zchannels",
+                        dest="zchannels",
+                        help="Number of channels per noise input.",
+                        nargs=5,
+                        default=[1, 2, 4, 8, 16],
+                        type=int)
+
     parser.add_argument("--no-batch-norm",
                         dest="no_batch_norm",
                         help="No batch normalization after each block.",
@@ -501,7 +512,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--evaluate-every",
                         dest="eval_every",
-                        help="Run an exaluation/sample every n epochs.",
+                        help="Run an evaluation/sample every n epochs.",
                         default=1, type=int)
 
     parser.add_argument("-k", "--kernel_size",
