@@ -399,37 +399,38 @@ def go(arg):
 
         for epoch in range(arg.epochs[depth]):
 
-            with torch.no_grad():
+            if epoch % arg.plot_every == 0 or epoch == arg.epochs[depth] - 1:
+                with torch.no_grad():
 
-                torch.save(encoder.state_dict(), f'./encoder.model')
-                torch.save(decoder.state_dict(), f'./decoder.model')
+                    torch.save(encoder.state_dict(), f'./encoder.model')
+                    torch.save(decoder.state_dict(), f'./decoder.model')
 
-                # plot reconstructions
-                lts = encoder(facespt[:5 * 20], depth=depth)
+                    # plot reconstructions
+                    lts = encoder(facespt[:5 * 20], depth=depth)
 
-                rec = torch.sigmoid(decoder(middle(lts, sample=False)))
+                    rec = torch.sigmoid(decoder(middle(lts, sample=False)))
 
-                rec = rec.permute(0, 2, 3, 1).cpu().data.numpy()
+                    rec = rec.permute(0, 2, 3, 1).cpu().data.numpy()
 
-                fig = plt.figure(figsize=(5, 20))
-                for i in range(5 * 20):
-                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-                    ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
+                    fig = plt.figure(figsize=(5, 20))
+                    for i in range(5 * 20):
+                        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                        ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
 
-                plt.tight_layout()
-                plt.savefig(f'reconstructions.{depth}.{epoch:04}.pdf')
+                    plt.tight_layout()
+                    plt.savefig(f'reconstructions.{depth}.{epoch:04}.pdf')
 
-                lts = latent_sample(100, arg.latent_size, depth, arg.zchannels)
-                outs = torch.sigmoid(decoder(lts))
-                outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
+                    lts = latent_sample(100, arg.latent_size, depth, arg.zchannels)
+                    outs = torch.sigmoid(decoder(lts))
+                    outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
 
-                fig = plt.figure(figsize=(5, 20))
-                for i in range(5 * 20):
-                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-                    ax.imshow(outs[i] * (np.ones(3) if grayscale else 1))
+                    fig = plt.figure(figsize=(5, 20))
+                    for i in range(5 * 20):
+                        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                        ax.imshow(outs[i] * (np.ones(3) if grayscale else 1))
 
-                plt.tight_layout()
-                plt.savefig(f'samples.{depth}.{epoch:04}.pdf')
+                    plt.tight_layout()
+                    plt.savefig(f'samples.{depth}.{epoch:04}.pdf')
 
             for i, (input, _) in enumerate(tqdm.tqdm(trainloader)):
 
@@ -529,6 +530,11 @@ if __name__ == "__main__":
                         dest="latent_size",
                         help="Size of latent space.",
                         default=256, type=int)
+
+    parser.add_argument("--plot-every",
+                        dest="plot_every",
+                        help="How many epochs between plots.",
+                        default=16, type=int)
 
     parser.add_argument('--beta',
                         dest='beta',
