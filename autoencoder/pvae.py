@@ -190,7 +190,7 @@ class Decoder(nn.Module):
         self.fromz2 = util.Block(1, c2, kernel_size=1)
         self.fromz3 = util.Block(1, c3, kernel_size=1)
         self.fromz4 = util.Block(1, c4, kernel_size=1)
-        self.fromz4 = util.Block(1, c5, kernel_size=1)
+        self.fromz5 = util.Block(1, c5, kernel_size=1)
 
 
         self.conv0 = nn.Conv2d(c, c * outc, kernel_size=1)
