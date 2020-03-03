@@ -57,6 +57,51 @@ def gather(generator, batches, numpy=True):
         return res.permute(0, 2, 3, 1).cpu().data.numpy()
     return res
 
+def latent_sample(batch, zsize, depth):
+    z = [None] * 6
+
+    if depth >= 5:
+        z[0] = torch.randn(batch, zsize, device=DV)
+
+    if depth >= 0:
+        z[1] = torch.randn(batch, 1, 64, 64, device=DV)
+    if depth >= 1:
+        z[2] = torch.randn(batch, 1, 32, 32, device=DV)
+    if depth >= 2:
+        z[3] = torch.randn(batch, 1, 16, 16, device=DV)
+    if depth >= 3:
+        z[4] = torch.randn(batch, 1,  8, 8, device=DV)
+    if depth >= 4:
+        z[5] = torch.randn(batch, 1,  8, 8, device=DV)
+
+    return z
+
+def middle(z, sample=True):
+    """
+    Executes the forward for the middle of the VAE
+    (without counting loss)
+
+    :param z:
+    :param sample:
+    :return:
+    """
+
+    o = [None] * len(z)
+
+    if z[0] is not None:
+        b, zs = z[0].size()
+        o[0] = sample(z[0])
+
+    for i in range(1, len(z)):
+        if z[i] is not None:
+            if sample:
+                o[i] = util.sample_image(z[i])
+            else:
+                b, c, h, w = z[i].size()
+                o[i] = z[i][:, :c//2, :, :]
+
+    return o
+
 class Encoder(nn.Module):
 
     def __init__(self, in_size, channels, zs=256, k=3, batch_norm=False, vae=False):
@@ -72,22 +117,54 @@ class Encoder(nn.Module):
         self.block4 = util.Block(c3, c4, kernel_size=k, batch_norm=batch_norm)
         self.block5 = util.Block(c4, c5, kernel_size=k, batch_norm=batch_norm)
 
+        #toz
+        self.toz1 = util.Block(c1, 2, kernel_size=1)
+        self.toz2 = util.Block(c2, 2, kernel_size=1)
+        self.toz3 = util.Block(c3, 2, kernel_size=1)
+        self.toz4 = util.Block(c4, 2, kernel_size=1)
+        self.toz5 = util.Block(c5, 2, kernel_size=1)
+
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
         self.lin = nn.Linear(self.fs, zs*(2 if vae else 1))
 
-    def forward(self, x0):
+    def forward(self, x0, depth):
 
         b = x0.size(0)
 
-        x1 = F.max_pool2d(self.block1(x0), 2)
-        x2 = F.max_pool2d(self.block2(x1), 2)
-        x3 = F.max_pool2d(self.block3(x2), 2)
-        x4 = F.max_pool2d(self.block4(x3), 2)
-        x5 = F.max_pool2d(self.block5(x4), 2)
+        z = [None, None, None, None, None, None]
 
-        z = self.lin(x5.view(b, self.fs))
+        x1 = self.block1(x0)
+        x1 = F.max_pool2d(x1, 2)
+        z[1] = self.toz1(x1)
+        if depth <= 0:
+            return z
 
-        return z
+        x2 = self.block2(x1)
+        x2 = F.max_pool2d(x2, 2)
+        z[2] = self.toz2(x2)
+        if depth <= 1:
+            return z
+
+        x3 = self.block3(x2)
+        x3 = F.max_pool2d(x3, 2)
+        z[3] = self.toz3(x3)
+        if depth <= 2:
+            return z
+
+        x4 = self.block4(x3)
+        x4 = F.max_pool2d(x4, 2)
+        z[4] = self.toz4(x4)
+        if depth <= 3:
+            return z
+
+        x5 = self.block5(x4)
+        z[5] = self.toz5(x5)
+        if depth <= 4:
+            return z
+
+        z[0] = self.lin(x5.view(b, self.fs))
+
+        return z # depth 5
 
 class Decoder(nn.Module):
 
@@ -107,6 +184,15 @@ class Decoder(nn.Module):
         self.block2 = util.Block(c2, c1, kernel_size=k, deconv=True, batch_norm=batch_norm)
         self.block1 = util.Block(c1, c,  kernel_size=k, deconv=True, batch_norm=batch_norm)
 
+        # fromz
+        # self.fromz0 = util.Block(1, c1, kernel_size=1)
+        self.fromz1 = util.Block(1, c1, kernel_size=1)
+        self.fromz2 = util.Block(1, c2, kernel_size=1)
+        self.fromz3 = util.Block(1, c3, kernel_size=1)
+        self.fromz4 = util.Block(1, c4, kernel_size=1)
+        self.fromz4 = util.Block(1, c5, kernel_size=1)
+
+
         self.conv0 = nn.Conv2d(c, c * outc, kernel_size=1)
 
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
@@ -115,16 +201,52 @@ class Decoder(nn.Module):
 
     def forward(self, z):
 
-        b = z.size(0)
         c, h, w = self.out_size
 
-        x5 = self.lin(z).view(b, self.ss[0], self.ss[1], self.ss[2])
+        if z[0] is not None:
+            b = z.size(0)
 
-        x4 = F.upsample_bilinear(self.block5(x5), scale_factor=2)
-        x3 = F.upsample_bilinear(self.block4(x4), scale_factor=2)
-        x2 = F.upsample_bilinear(self.block3(x3), scale_factor=2)
-        x1 = F.upsample_bilinear(self.block2(x2), scale_factor=2)
-        x0 = F.upsample_bilinear(self.block1(x1), scale_factor=2)
+        x0 = x1 = x2 = x3 = x4 = x5 = None
+
+        if z[0] is not None:
+            x5 = self.lin(z[0]).view(b, self.ss[0], self.ss[1], self.ss[2])
+
+        if z[5] is not None:
+            z5 = self.fromz5(z[5])
+            x5 = z5 if x5 is None else x5 + z5
+
+        if x5 is not None:
+            x4 = F.upsample_bilinear(self.block5(x5), scale_factor=2)
+
+        if z[4] is not None:
+            z4 = self.fromz4(z[4])
+            x4 = z4 if x4 is None else x4 + z4
+
+        if x4 is not None:
+            x3 = F.upsample_bilinear(self.block4(x4), scale_factor=2)
+
+        if z[3] is not None:
+            z3 = self.fromz3(z[3])
+            x3 = z3 if x3 is None else x3 + z3
+
+        if x3 is not None:
+            x2 = F.upsample_bilinear(self.block3(x3), scale_factor=2)
+
+        if z[2] is not None:
+            z2 = self.fromz2(z[2])
+            x2 = z2 if x2 is None else x2 + z2
+
+        if x2 is not None:
+            x1 = F.upsample_bilinear(self.block2(x2), scale_factor=2)
+
+        if z[1] is not None:
+            z1 = self.fromz1(z[1])
+            x1 = z1 if x1 is None else x1 + z1
+
+        if x1 is not None:
+            x0 = F.upsample_bilinear(self.block1(x1), scale_factor=2)
+        else:
+            x0 = torch.zeros(1, device=DV).expand(b, c, h, w)
 
         return self.conv0(x0)
 
@@ -132,8 +254,6 @@ def go(arg):
 
     tbw = SummaryWriter(log_dir=arg.tb_dir)
     grayscale = False
-
-    v = 'vae' if arg.variational else 'ae'
 
     ## Load the data
     if arg.task == 'mnist':
@@ -191,7 +311,7 @@ def go(arg):
     elif arg.task == 'ffhq':
 
         # These are people in the data that smile
-        SMILING = [1, 6, 7, 9, 14,   16, 17, 20, 21, 29,    30, 31, 33, 40, 45,    51, 55, 57, 58, 61]
+        SMILING = [1, 6, 7, 9, 14,      16, 17, 20, 21, 29,    30, 31, 33, 40, 45,    51, 55, 57, 58, 61]
         NONSMILING = [0, 2, 3, 4, 5,    8, 10, 11, 18, 19,     23, 25, 27, 28, 32,    34, 35, 36, 37, 44]
 
         transform = Compose([ToTensor()])
@@ -220,48 +340,46 @@ def go(arg):
     if torch.cuda.is_available():
         facespt = facespt.cuda()
 
-    # plot data
-    fig = plt.figure(figsize=(5, 20))
-    for i in range(5 * 20):
-        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-        ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
-        ax.set_title(i)
+    # # plot data
+    # fig = plt.figure(figsize=(5, 20))
+    # for i in range(5 * 20):
+    #     ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+    #     ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
+    #     ax.set_title(i)
+    #
+    # plt.tight_layout()
+    # plt.savefig('faces.pdf')
+    #
+    # # plot data
+    # fig = plt.figure(figsize=(5, 20))
+    # for i in range(5 * 20):
+    #     ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+    #     ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
+    #
+    # plt.tight_layout()
+    # plt.savefig('faces-notitle.pdf')
+    #
+    # # smiling/nonsmiling
+    # fig = plt.figure(figsize=(5, 4))
+    # for i in range(len(SMILING)):
+    #     ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
+    #     ax.imshow(faces[SMILING[i]] * (np.ones(3) if grayscale else 1))
+    #
+    # plt.savefig('smiling-faces.pdf')
+    #
+    # fig = plt.figure(figsize=(5, 4))
+    # for i in range(len(NONSMILING)):
+    #     ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
+    #     ax.imshow(faces[NONSMILING[i]] * (np.ones(3) if grayscale else 1))
+    #
+    # plt.savefig('nonsmiling-faces.pdf')
 
-    plt.tight_layout()
-    plt.savefig('faces.pdf')
-
-    # plot data
-    fig = plt.figure(figsize=(5, 20))
-    for i in range(5 * 20):
-        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-        ax.imshow(faces[i] * (np.ones(3) if grayscale else 1))
-
-    plt.tight_layout()
-    plt.savefig('faces-notitle.pdf')
-
-    # smiling/nonsmiling
-    fig = plt.figure(figsize=(5, 4))
-    for i in range(len(SMILING)):
-        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
-        ax.imshow(faces[SMILING[i]] * (np.ones(3) if grayscale else 1))
-
-    plt.savefig('smiling-faces.pdf')
-
-    fig = plt.figure(figsize=(5, 4))
-    for i in range(len(NONSMILING)):
-        ax = fig.add_subplot(4, 5, i + 1, xticks=[], yticks=[])
-        ax.imshow(faces[NONSMILING[i]] * (np.ones(3) if grayscale else 1))
-
-    plt.savefig('nonsmiling-faces.pdf')
-
-    zs = arg.latent_size
-
-    encoder = Encoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm, vae=arg.variational)
-    decoder = Decoder((C, H, W), arg.channels, zs=zs, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    encoder = Encoder((C, H, W), arg.channels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
+    decoder = Decoder((C, H, W), arg.channels, zs=arg.latent_size, k=arg.kernel_size, batch_norm=not arg.no_batch_norm)
 
     if arg.cp is not None:
-        encoder.load_state_dict(torch.load(arg.cp + os.sep + f'encoder.{v}.model', map_location=torch.device('cpu')))
-        decoder.load_state_dict(torch.load(arg.cp + os.sep + f'decoder.{v}.model', map_location=torch.device('cpu')))
+        encoder.load_state_dict(torch.load(arg.cp + os.sep + f'encoder.model', map_location=torch.device('cpu')))
+        decoder.load_state_dict(torch.load(arg.cp + os.sep + f'decoder.model', map_location=torch.device('cpu')))
 
     optimizer = Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=arg.lr)
 
@@ -270,19 +388,22 @@ def go(arg):
         decoder.cuda()
 
     instances_seen = 0
-    for epoch in range(arg.epochs):
+    for depth in range(len(arg.epochs)):
 
-        if epoch in OUT_EPOCHS:
+        print(f'Starting depth {depth}, running {arg.epochs[depth]} epochs.')
+
+        for epoch in range(arg.epochs[depth]):
+
             with torch.no_grad():
 
-                torch.save(encoder.state_dict(), f'./encoder.{v}.{epoch:04}.model')
-                torch.save(decoder.state_dict(), f'./decoder.{v}.{epoch:04}.model')
-
-                # reconstructions
+                torch.save(encoder.state_dict(), f'./encoder.model')
+                torch.save(decoder.state_dict(), f'./decoder.model')
 
                 # plot reconstructions
-                lts = encoder(facespt[:5 * 20])
-                rec = torch.sigmoid(decoder(lts[:, :arg.latent_size]))
+                lts = encoder(facespt[:5 * 20], depth=depth)
+
+                rec = torch.sigmoid(decoder(middle(lts, sample=False)))
+
                 rec = rec.permute(0, 2, 3, 1).cpu().data.numpy()
 
                 fig = plt.figure(figsize=(5, 20))
@@ -291,139 +412,62 @@ def go(arg):
                     ax.imshow(rec[i] * (np.ones(3) if grayscale else 1))
 
                 plt.tight_layout()
-                plt.savefig(f'reconstructions.{epoch:04}.pdf')
+                plt.savefig(f'reconstructions.{depth}.{epoch:04}.pdf')
 
-                # random samples
-                if arg.variational:
-                    lts = torch.randn(100, arg.latent_size, device=DV)
-                    outs = torch.sigmoid(decoder(lts))
-                    outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
+                lts = latent_sample(100, arg.latent_size, depth)
+                outs = torch.sigmoid(decoder(lts))
+                outs = outs.permute(0, 2, 3, 1).cpu().data.numpy()
 
-                    fig = plt.figure(figsize=(5, 20))
-                    for i in range(5 * 20):
-                        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-                        ax.imshow(outs[i] * (np.ones(3) if grayscale else 1))
+                fig = plt.figure(figsize=(5, 20))
+                for i in range(5 * 20):
+                    ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
+                    ax.imshow(outs[i] * (np.ones(3) if grayscale else 1))
 
-                    plt.tight_layout()
-                    plt.savefig(f'samples.{epoch:04}.pdf')
+                plt.tight_layout()
+                plt.savefig(f'samples.{depth}.{epoch:04}.pdf')
 
-                else:
-                    # Fit an MVN to the latent space and sample
-                    latent = encoder(facespt)
+            for i, (input, _) in enumerate(tqdm.tqdm(trainloader)):
 
-                    plt.figure(figsize=(8, 6))
-                    plt.scatter(latent[:, 0], latent[:, 1], linewidth=0, color=BLUE, s=4, alpha=0.2)
+                if arg.limit is not None and i * arg.batch_size > arg.limit:
+                    break
 
-                    mean = np.mean(latent.data.numpy(), axis=0)
-                    cov  = np.cov(latent.data.numpy().T)
+                # Prepare the input
+                b, c, w, h = input.size()
+                if torch.cuda.is_available():
+                    input = input.cuda()
 
-                    sample = np.random.multivariate_normal(mean, cov, 100)
-                    plt.scatter(sample[:, 0], sample[:, 1], linewidth=0, color=RED, s=12, alpha=1)
-                    plt.savefig('sample.scatter.png')
+                # -- encoding
+                zs = encoder(input, depth=depth)
 
-                    out = torch.sigmoid(decoder(torch.from_numpy(sample).to(torch.float)))
+                kls = []
+                if zs[0] is not None:
+                    kls.append(util.kl_loss(zs[0][:, :arg.latent_size], zs[0][:, arg.latent_size:])[:, None])
 
-                    fig = plt.figure(figsize=(5, 20))
+                for z in zs[1:]:
+                    if z is not None:
+                        kls.append(util.kl_loss_image(z)[:, None])
 
-                    # plot several images
-                    for i in range(100):
-                        ax = fig.add_subplot(20, 5, i + 1, xticks=[], yticks=[])
-                        ax.imshow(out[i].permute(1, 2, 0) * (np.ones(3) if grayscale else 1), cmap=plt.cm.gray)
+                zsample  = middle(zs, sample=True)
 
-                    plt.tight_layout()
-                    plt.savefig('faces-generated.pdf')
+                # -- decoding
+                xout = decoder(zsample)
+                rc_loss = F.binary_cross_entropy_with_logits(xout, input, reduction='none').view(b, -1).sum(dim=1, keepdim=True)
 
-                # smile to frown
+                loss = torch.cat([rc_loss] +  kls, dim=1).sum(dim=1)
+                loss = loss.mean()
 
-                # Select the smiling and nonsmiling images from the dataset
-                smiling = facespt[SMILING, ...]
-                nonsmiling = facespt[NONSMILING, ...]
+                instances_seen += input.size(0)
 
-                # Pass them through the encoder
-                smiling_latent = encoder(smiling)
-                nonsmiling_latent = encoder(nonsmiling)
+                # if arg.variational:
+                #     tbw.add_scalar('style-vae/zkl-loss', float(kl_loss.data.mean(dim=0).item()), instances_seen)
+                # tbw.add_scalar('style-vae/rec-loss', float(rc_loss.data.mean(dim=0).item()), instances_seen)
+                # tbw.add_scalar('style-vae/total-loss', float(loss.data.item()), instances_seen)
 
-                if arg.variational:
-                    smiling_latent = smiling_latent[:, :arg.latent_size]
-                    nonsmiling_latent = nonsmiling_latent[:, :arg.latent_size]
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-                # Compute the means for both groups
-                smiling_mean = smiling_latent.mean(dim=0)
-                nonsmiling_mean = nonsmiling_latent.mean(dim=0)
-
-                # Subtract for smiling vector
-                smiling_vector = smiling_mean - nonsmiling_mean
-
-                # # Making somebody smile (person 42):
-                # latent = encoder.predict(faces[None, 42, ...])
-                # l_smile  = latent + 0.3 * smiling_vector
-                # smiling = decoder.predict(l_smile)
-
-                # Plot frowning-to-smiling transition for several people
-                # in a big PDF image
-                randos = 6
-                k = 9
-                fig = plt.figure(figsize=(k, randos))
-
-                for rando in range(randos):
-                    rando_latent = encoder(facespt[rando:rando + 1])
-
-                    if arg.variational:
-                        rando_latent = rando_latent[:, :arg.latent_size]
-
-                    # plot several images
-                    adds = np.linspace(-1.0, 1.0, k)
-
-                    if arg.variational:
-                        adds *= 2.0
-
-                    for i in range(k):
-                        gen_latent = rando_latent + adds[i] * smiling_vector
-                        gen = torch.sigmoid(decoder(gen_latent))
-
-                        ax = fig.add_subplot(randos, k, rando * k + i + 1, xticks=[], yticks=[])
-                        ax.imshow(gen[0].permute(1, 2, 0).data.cpu() * (np.ones(3) if grayscale else 1), cmap=plt.cm.gray)
-
-                plt.savefig(f'rando-to-smiling.{v}.pdf')
-
-
-        for i, (input, _) in enumerate(tqdm.tqdm(trainloader)):
-            if arg.limit is not None and i * arg.batch_size > arg.limit:
-                break
-
-            # Prepare the input
-            b, c, w, h = input.size()
-            if torch.cuda.is_available():
-                input = input.cuda()
-
-            # -- encoding
-            z = encoder(input)
-
-            if arg.variational:
-                kl_loss = util.kl_loss(z[:, :zs], z[:, zs:])
-                zsample  = util.sample(z[:, :zs], z[:, zs:])
-            else:
-                kl_loss = 0
-                zsample = z
-
-            # -- decoding
-            xout = decoder(zsample)
-            rc_loss = F.binary_cross_entropy_with_logits(xout, input, reduction='none').view(b, -1).sum(dim=1)
-
-            loss = rc_loss + arg.beta * kl_loss
-            loss = loss.mean()
-
-            instances_seen += input.size(0)
-
-            if arg.variational:
-                tbw.add_scalar('style-vae/zkl-loss', float(kl_loss.data.mean(dim=0).item()), instances_seen)
-            tbw.add_scalar('style-vae/rec-loss', float(rc_loss.data.mean(dim=0).item()), instances_seen)
-            tbw.add_scalar('style-vae/total-loss', float(loss.data.item()), instances_seen)
-
-            # Backward pass
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
 
 if __name__ == "__main__":
 
@@ -437,8 +481,10 @@ if __name__ == "__main__":
 
     parser.add_argument("-e", "--epochs",
                         dest="epochs",
-                        help="Number of epochs.",
-                        default=150, type=int)
+                        help="Epoch schedule per depth.",
+                        nargs=6,
+                        default=[1, 2, 3, 6, 12, 12],
+                        type=int)
 
     parser.add_argument("-c", "--channels",
                         dest="channels",
@@ -450,11 +496,6 @@ if __name__ == "__main__":
     parser.add_argument("--no-batch-norm",
                         dest="no_batch_norm",
                         help="No batch normalization after each block.",
-                        action='store_true')
-
-    parser.add_argument("--variational",
-                        dest="variational",
-                        help="Uses a VAE instead of a regular AE.",
                         action='store_true')
 
     parser.add_argument("--evaluate-every",
