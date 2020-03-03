@@ -67,7 +67,6 @@ def sample(zmean, zlsig, eps=None):
         eps = torch.randn(b, l)
         if zmean.is_cuda:
             eps = eps.cuda()
-        eps = Variable(eps)
 
     return zmean + eps * (zlsig * 0.5).exp()
 

@@ -72,7 +72,7 @@ def latent_sample(batch, zsize, depth):
     if depth >= 3:
         z[4] = torch.randn(batch, 1,  8, 8, device=DV)
     if depth >= 4:
-        z[5] = torch.randn(batch, 1,  8, 8, device=DV)
+        z[5] = torch.randn(batch, 1,  4, 4, device=DV)
 
     return z
 
@@ -90,7 +90,7 @@ def middle(z, sample=True):
 
     if z[0] is not None:
         b, zs = z[0].size()
-        o[0] = sample(z[0])
+        o[0] = util.sample(z[0][:, :zs//2], z[0][:, zs//2:])
 
     for i in range(1, len(z)):
         if z[i] is not None:
@@ -125,7 +125,7 @@ class Encoder(nn.Module):
         self.toz5 = util.Block(c5, 2, kernel_size=1)
 
         self.fs = (h // 2**5) * (w // 2 ** 5) * c5
-        self.lin = nn.Linear(self.fs, zs*(2 if vae else 1))
+        self.lin = nn.Linear(self.fs, zs*2)
 
     def forward(self, x0, depth):
 
@@ -158,6 +158,7 @@ class Encoder(nn.Module):
             return z
 
         x5 = self.block5(x4)
+        x5 = F.max_pool2d(x5, 2)
         z[5] = self.toz5(x5)
         if depth <= 4:
             return z
@@ -204,7 +205,7 @@ class Decoder(nn.Module):
         c, h, w = self.out_size
 
         if z[0] is not None:
-            b = z.size(0)
+            b = z[0].size(0)
 
         x0 = x1 = x2 = x3 = x4 = x5 = None
 
